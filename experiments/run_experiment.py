@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import statistics
 import subprocess
 import time
@@ -49,6 +50,18 @@ def _update_manifest(output: Path, summary: dict[str, Any], config: dict[str, An
         }
     )
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _runtime_metadata(model: str | None) -> dict[str, Any]:
+    return {
+        "model_served_name": model or os.getenv("MODEL_ID"),
+        "model_path": os.getenv("MODEL_PATH") or os.getenv("INFERGATE_MODEL_PATH"),
+        "vllm_base_url": os.getenv("VLLM_BASE_URL"),
+        "vllm_metrics_url": os.getenv("VLLM_METRICS_URL"),
+        "cache_backend": os.getenv("CACHE_BACKEND"),
+        "gpu": os.getenv("INFERGATE_GPU", os.getenv("GPU_NAME")),
+        "vllm_launch_args": os.getenv("VLLM_LAUNCH_ARGS"),
+    }
 
 
 async def _send_one(
@@ -154,6 +167,7 @@ async def run_experiment(
             "policy": policy,
             "seed": seed,
             "model": model,
+            **_runtime_metadata(model),
         },
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))

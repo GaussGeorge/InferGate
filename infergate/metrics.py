@@ -58,6 +58,11 @@ def _max_matching(samples: list[MetricSample], fragments: tuple[str, ...]) -> fl
     return max(values) if values else 0.0
 
 
+def _counter_value(samples: list[MetricSample], metric_name: str) -> float | None:
+    values = [sample.value for sample in samples if sample.name == metric_name]
+    return sum(values) if values else None
+
+
 def load_snapshot_from_prometheus(text: str) -> LoadSnapshot:
     samples = parse_prometheus_metrics(text)
     waiting = _sum_matching(samples, ("request", "waiting")) or _sum_matching(samples, ("num_requests_waiting",))
@@ -69,11 +74,19 @@ def load_snapshot_from_prometheus(text: str) -> LoadSnapshot:
     )
     if kv_usage > 1.0:
         kv_usage = kv_usage / 100.0
+    prefix_queries = _counter_value(samples, "vllm:prefix_cache_queries_total")
+    prefix_hits = _counter_value(samples, "vllm:prefix_cache_hits_total")
+    prefix_hit_rate = None
+    if prefix_queries is not None and prefix_hits is not None and prefix_queries > 0:
+        prefix_hit_rate = max(0.0, min(1.0, prefix_hits / prefix_queries))
     return LoadSnapshot(
         num_requests_waiting=int(waiting),
         num_requests_running=int(running),
         kv_cache_usage_perc=max(0.0, min(1.0, kv_usage)),
         gpu_cache_usage_perc=max(0.0, min(1.0, kv_usage)),
+        prefix_cache_queries_total=prefix_queries,
+        prefix_cache_hits_total=prefix_hits,
+        prefix_cache_hit_rate=prefix_hit_rate,
         metrics_available=True,
         warmup_allowed=True,
     )

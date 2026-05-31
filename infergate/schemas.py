@@ -5,7 +5,7 @@ import uuid
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class Action(str, Enum):
@@ -54,9 +54,13 @@ class LoadSnapshot(BaseModel):
     num_requests_running: int = 0
     kv_cache_usage_perc: float = 0.0
     gpu_cache_usage_perc: float = 0.0
+    prefix_cache_queries_total: float | None = None
+    prefix_cache_hits_total: float | None = None
+    prefix_cache_hit_rate: float | None = None
     metrics_available: bool = True
     warmup_allowed: bool = True
 
+    @computed_field
     @property
     def is_overloaded(self) -> bool:
         return self.num_requests_waiting > 0 or self.kv_cache_usage_perc >= 0.85

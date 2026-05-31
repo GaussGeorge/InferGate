@@ -60,6 +60,35 @@ Recommended vLLM flags for the A4000 target:
 
 If A4000 memory is insufficient, lower `--max-model-len` to `4096`.
 
+WSL example used for the first real A4000 smoke:
+
+```bash
+python -m vllm.entrypoints.openai.api_server \
+  --model /mnt/d/model_path/qwen3.5-4b \
+  --served-model-name qwen \
+  --trust-remote-code \
+  --host 127.0.0.1 \
+  --port 9999 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.8 \
+  --enforce-eager \
+  --max-num-seqs 8 \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes
+```
+
+Windows-side environment for that run:
+
+```powershell
+$env:MODEL_ID="qwen"
+$env:INFERGATE_MODEL_PATH="/mnt/d/model_path/qwen3.5-4b"
+$env:VLLM_BASE_URL="http://127.0.0.1:9999"
+$env:VLLM_METRICS_URL="http://127.0.0.1:9999/metrics"
+$env:CACHE_BACKEND="vllm_apc"
+$env:INFERGATE_GPU="RTX A4000 16GB"
+$env:VLLM_LAUNCH_ARGS="python -m vllm.entrypoints.openai.api_server --model /mnt/d/model_path/qwen3.5-4b --served-model-name qwen --trust-remote-code --host 127.0.0.1 --port 9999 --max-model-len 4096 --gpu-memory-utilization 0.8 --enforce-eager --max-num-seqs 8 --enable-auto-tool-choice --tool-call-parser hermes"
+```
+
 Run real-service smoke levels:
 
 ```powershell
