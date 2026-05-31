@@ -1,0 +1,15 @@
+system_or_paper,venue_or_year,category,role_in_infergate
+vLLM / PagedAttention,SOSP 2023,LLM serving engine,Primary serving substrate and APC baseline
+LMCache,2024-2025,KV cache reuse,External KV cache integration target
+Virtual Token Counter (VTC),OSDI 2024,Fairness,External VTC-inspired baseline only
+Llumnix,OSDI 2024,LLM serving scheduling,Related work comparison
+Sarathi-Serve,OSDI 2024,Chunked prefill scheduling,Related work comparison
+DistServe,OSDI 2024,Prefill/decode disaggregation,Related work comparison
+InfiniGen,OSDI 2024,KV cache management,Related work comparison
+Orca,OSDI 2022,Iteration-level scheduling,Related work comparison
+FastServe,OSDI 2023,LLM serving scheduling,Related work comparison
+AlpaServe,OSDI 2023,Model serving,Related work comparison
+FlexGen,ICML 2023,Resource-constrained inference,Related work comparison
+SGLang,2024,LLM serving/runtime,Related work comparison
+Splitwise,ISCA 2024,LLM serving disaggregation,Related work comparison
+

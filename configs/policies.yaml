@@ -1,0 +1,21 @@
+policies:
+  fcfs:
+    description: "FIFO admission and queueing. No degradation."
+  sjf:
+    description: "Prioritize lower estimated token cost."
+  edf:
+    description: "Prioritize nearest deadline; requests without deadlines rank last."
+  static_threshold:
+    kv_reject_threshold: 0.92
+    waiting_reject_threshold: 64
+  vtc_inspired:
+    tenant_token_limit: 60000
+    description: "External fairness baseline based on accumulated tenant token cost; not a full VTC kernel scheduler."
+  infergate_admission:
+    reject_score: 0.0010
+    degrade_score: 0.0020
+  infergate_cache:
+    reject_score: 0.0010
+    degrade_score: 0.0020
+    warmup_budget_fraction: 0.10
+

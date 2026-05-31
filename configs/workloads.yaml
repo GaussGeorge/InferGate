@@ -1,0 +1,14 @@
+stage3_no_cache:
+  policies: [fcfs, sjf, edf, static_threshold, vtc_inspired, infergate_admission]
+  concurrency: [8, 16, 32, 64]
+  workloads: [short_qa, long_context, mixed_short_long, agent_session]
+  repeats: 3
+
+stage4_cache:
+  cache_modes: [no_cache_control, always_warm, lru_warm, infergate_cache]
+  cache_backend: [vllm_apc, lmcache]
+  workloads: [shared_system_prompt, repeated_rag_context, agent_session_prefix, non_reuse_control]
+  concurrency: [8, 16, 32]
+  repeats: 3
+  ablations: [no_session_progress, no_cache_gain, no_warmup_budget]
+

@@ -1,0 +1,32 @@
+system:
+  infergate_url: "http://127.0.0.1:8080"
+  vllm_base_url: "${VLLM_BASE_URL:-http://127.0.0.1:8000}"
+  vllm_metrics_url: "${VLLM_METRICS_URL:-http://127.0.0.1:8000/metrics}"
+  model_id: "${MODEL_ID}"
+  gpu: "NVIDIA RTX A4000 16GB"
+
+infergate:
+  policy: "infergate_admission"
+  max_active_requests: 8
+  max_queue_size: 128
+  queue_timeout_ms: 120000
+  degraded_max_tokens: 128
+  request_timeout_s: 300
+
+cache:
+  backend: "vllm_apc"
+  lmcache_fallback_backend: "vllm_apc"
+  warmup_budget_fraction: 0.10
+  warmup_max_tokens: 1
+
+vllm:
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.88
+  enable_prefix_caching: true
+  max_model_len: 8192
+
+experiments:
+  default_requests: 1000
+  smoke_requests: 20
+  real_smoke_levels: [10, 100, 1000]
+
