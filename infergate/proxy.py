@@ -4,7 +4,7 @@ import asyncio
 import copy
 import os
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -105,11 +105,25 @@ def _extract_usage(response_json: dict[str, Any], fallback_prompt_tokens: int) -
 def create_app(config: ProxyConfig | None = None) -> FastAPI:
     cfg = config or ProxyConfig.from_env()
 
+    async def metrics_refresh_loop(lifespan_app: FastAPI) -> None:
+        while True:
+            snapshot = await fetch_load_snapshot(
+                lifespan_app.state.config.metrics_url,
+                client=lifespan_app.state.metrics_client,
+            )
+            lifespan_app.state.load_snapshot = snapshot
+            lifespan_app.state.load_snapshot_ts = time.perf_counter()
+            await asyncio.sleep(max(0.05, lifespan_app.state.config.metrics_ttl_ms / 1000.0))
+
     @asynccontextmanager
     async def lifespan(lifespan_app: FastAPI):
+        lifespan_app.state.metrics_task = asyncio.create_task(metrics_refresh_loop(lifespan_app))
         try:
             yield
         finally:
+            lifespan_app.state.metrics_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await lifespan_app.state.metrics_task
             await lifespan_app.state.forward_client.aclose()
             await lifespan_app.state.metrics_client.aclose()
 
@@ -126,7 +140,6 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     app.state.metrics_client = httpx.AsyncClient(timeout=0.5, trust_env=False)
     app.state.load_snapshot = conservative_load_snapshot()
     app.state.load_snapshot_ts = 0.0
-    app.state.load_snapshot_lock = asyncio.Lock()
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -162,27 +175,10 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             payload.setdefault("metadata", {})["infergate_warmup"] = True
         return await app.state.forward_client.post(app.state.forward_url, json=payload, headers=headers)
 
-    async def refresh_load_snapshot() -> None:
-        async with app.state.load_snapshot_lock:
-            now = time.perf_counter()
-            ttl_s = max(0.0, app.state.config.metrics_ttl_ms / 1000.0)
-            if now - app.state.load_snapshot_ts <= ttl_s:
-                return
-            snapshot = await fetch_load_snapshot(
-                app.state.config.metrics_url,
-                client=app.state.metrics_client,
-            )
-            app.state.load_snapshot = snapshot
-            app.state.load_snapshot_ts = time.perf_counter()
-    
     async def get_load_snapshot() -> LoadSnapshot:
         custom_load_provider = getattr(app.state, "load_snapshot_provider", None)
         if custom_load_provider is not None:
             return await custom_load_provider()
-        now = time.perf_counter()
-        ttl_s = max(0.0, app.state.config.metrics_ttl_ms / 1000.0)
-        if now - app.state.load_snapshot_ts > ttl_s and not app.state.load_snapshot_lock.locked():
-            asyncio.create_task(refresh_load_snapshot())
         return app.state.load_snapshot
 
     async def maybe_schedule_warmup(load_snapshot: LoadSnapshot) -> None:
