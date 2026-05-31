@@ -18,7 +18,7 @@ from .metrics import JsonlWriter, conservative_load_snapshot, fetch_load_snapsho
 from .policies import make_policy
 from .queue import AdmissionQueue
 from .schemas import Action, Decision, LoadSnapshot, PolicySettings, TraceRecord
-from .tokenizer import TokenEstimator, build_request_context
+from .tokenizer import TokenEstimator, build_request_context, get_max_tokens
 from .warmup import WarmupManager
 
 
@@ -28,6 +28,7 @@ class ProxyConfig(BaseModel):
     vllm_base_url: str = "http://127.0.0.1:8000"
     metrics_url: str = "http://127.0.0.1:8000/metrics"
     model_id: str | None = None
+    tokenizer_id: str | None = None
     policy_name: str = "infergate_admission"
     cache_backend: str = "vllm_apc"
     results_dir: str = "results/smoke"
@@ -55,6 +56,7 @@ class ProxyConfig(BaseModel):
             vllm_base_url=os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000"),
             metrics_url=os.getenv("VLLM_METRICS_URL", "http://127.0.0.1:8000/metrics"),
             model_id=os.getenv("MODEL_ID"),
+            tokenizer_id=os.getenv("INFERGATE_TOKENIZER_ID"),
             policy_name=os.getenv("INFERGATE_POLICY", "infergate_admission"),
             cache_backend=os.getenv("CACHE_BACKEND", "vllm_apc"),
             results_dir=os.getenv("INFERGATE_RESULTS_DIR", "results/smoke"),
@@ -87,6 +89,8 @@ def _apply_degrade(payload: dict[str, Any], decision: Decision) -> dict[str, Any
     except (TypeError, ValueError):
         current_tokens = 512
     target = decision.degrade_max_tokens or max(1, current_tokens // 2)
+    if target >= current_tokens:
+        target = max(1, current_tokens // 2)
     body["max_tokens"] = max(1, min(current_tokens, target))
     metadata = body.setdefault("metadata", {})
     if isinstance(metadata, dict):
@@ -129,7 +133,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
     app = FastAPI(title="InferGate", version="0.1.0", lifespan=lifespan)
     app.state.config = cfg
-    app.state.token_estimator = TokenEstimator(cfg.model_id, prefer_hf=cfg.prefer_hf_tokenizer)
+    app.state.token_estimator = TokenEstimator(cfg.tokenizer_id, prefer_hf=cfg.prefer_hf_tokenizer)
     app.state.cache_registry = CacheRegistry(cache_backend=cfg.cache_backend)
     app.state.warmup_manager = WarmupManager(cfg.model_id, cfg.settings.warmup_budget_fraction)
     app.state.queue = AdmissionQueue(max_active_requests=cfg.settings.max_active_requests)
@@ -148,11 +152,14 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             "policy": app.state.config.policy_name,
             "vllm_url": app.state.forward_url,
             "cache_backend": app.state.cache_registry.cache_backend,
+            "model_id": app.state.config.model_id,
+            "tokenizer_id": app.state.config.tokenizer_id,
+            "tokenizer_fallback": app.state.token_estimator.fallback,
         }
 
     @app.get("/infergate/metrics")
     async def infergate_metrics() -> dict[str, Any]:
-        queue_state = await app.state.queue.snapshot(app.state.tenant_token_debt)
+        queue_state = app.state.queue.snapshot_nowait(app.state.tenant_token_debt)
         warmup = app.state.warmup_manager.stats
         return {
             "queue": queue_state.model_dump(),
@@ -181,6 +188,24 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             return await custom_load_provider()
         return app.state.load_snapshot
 
+    def trace_context(
+        load_snapshot: LoadSnapshot,
+        queue_state: Any,
+        max_tokens_original: int,
+        max_tokens_sent: int | None,
+    ) -> dict[str, Any]:
+        return {
+            "load_running": load_snapshot.num_requests_running,
+            "load_waiting": load_snapshot.num_requests_waiting,
+            "load_kv_cache_usage": load_snapshot.kv_cache_usage_perc,
+            "load_prefix_cache_hit_rate": load_snapshot.prefix_cache_hit_rate,
+            "queue_active": queue_state.active_requests,
+            "queue_waiting": queue_state.waiting_requests,
+            "queue_saturation": queue_state.saturation,
+            "max_tokens_original": max_tokens_original,
+            "max_tokens_sent": max_tokens_sent,
+        }
+
     async def maybe_schedule_warmup(load_snapshot: LoadSnapshot) -> None:
         if app.state.cache_registry.cache_backend not in {"vllm_apc", "lmcache"}:
             return
@@ -205,12 +230,17 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         payload = await request.json()
         headers = _filtered_headers(request)
         ctx = build_request_context(payload, request.headers, app.state.token_estimator)
+        policy_name = request.headers.get("x-infergate-policy", app.state.config.policy_name)
+        load_snapshot = await get_load_snapshot()
+        if not load_snapshot.metrics_available and app.state.config.cache_backend == "lmcache":
+            app.state.cache_registry.cache_backend = "vllm_apc"
+        queue_state = await app.state.queue.snapshot(app.state.tenant_token_debt)
         if payload.get("stream") is True:
             gateway_ms = (time.perf_counter() - request_started) * 1000
             record = TraceRecord(
                 request_id=ctx.request_id,
                 session_id=ctx.session_id,
-                policy=request.headers.get("x-infergate-policy", app.state.config.policy_name),
+                policy=policy_name,
                 decision=Action.REJECT.value,
                 score=0.0,
                 reason="streaming_not_supported",
@@ -219,6 +249,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 session_step=ctx.session_step,
                 queue_wait_ms=0.0,
                 gateway_ms=gateway_ms,
+                **trace_context(load_snapshot, queue_state, ctx.max_tokens, None),
                 prompt_tokens=ctx.prompt_tokens,
                 accepted=False,
                 rejected=True,
@@ -239,16 +270,11 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 },
                 status_code=400,
             )
-        policy_name = request.headers.get("x-infergate-policy", app.state.config.policy_name)
         try:
             policy = make_policy(policy_name, app.state.config.settings)
         except KeyError:
             return JSONResponse({"error": {"message": f"unknown policy: {policy_name}"}}, status_code=400)
 
-        load_snapshot = await get_load_snapshot()
-        if not load_snapshot.metrics_available and app.state.config.cache_backend == "lmcache":
-            app.state.cache_registry.cache_backend = "vllm_apc"
-        queue_state = await app.state.queue.snapshot(app.state.tenant_token_debt)
         cache_state = app.state.cache_registry.state(ctx.cache_key)
         decision = policy.decide(ctx, load_snapshot, queue_state, cache_state)
         gateway_ms = (time.perf_counter() - request_started) * 1000
@@ -266,6 +292,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 session_step=ctx.session_step,
                 queue_wait_ms=0.0,
                 gateway_ms=gateway_ms,
+                **trace_context(load_snapshot, queue_state, ctx.max_tokens, None),
                 prompt_tokens=ctx.prompt_tokens,
                 accepted=False,
                 rejected=True,
@@ -290,6 +317,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             )
 
         body = _apply_degrade(payload, decision) if decision.action == Action.DEGRADE else copy.deepcopy(payload)
+        max_tokens_sent = get_max_tokens(body)
         acquired = False
         e2e_started = time.perf_counter()
         response_json: dict[str, Any] | None = None
@@ -341,6 +369,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 ttft_ms=ttft_ms,
                 e2e_ms=e2e_ms,
                 gateway_ms=gateway_ms,
+                **trace_context(load_snapshot, queue_state, ctx.max_tokens, max_tokens_sent),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 accepted=200 <= status_code < 300,
@@ -386,6 +415,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                     queue_wait_ms=queue_wait_ms,
                     e2e_ms=(time.perf_counter() - e2e_started) * 1000,
                     gateway_ms=gateway_ms,
+                    **trace_context(load_snapshot, queue_state, ctx.max_tokens, max_tokens_sent),
                     prompt_tokens=ctx.prompt_tokens,
                     accepted=False,
                     rejected=status_code == 429,

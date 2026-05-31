@@ -42,18 +42,36 @@ function Stop-StartedProcess {
   }
 }
 
+function Wait-HttpReady {
+  param(
+    [string]$Url,
+    [int]$TimeoutSec = 60
+  )
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  do {
+    try {
+      Invoke-RestMethod -Uri $Url -TimeoutSec 2 | Out-Null
+      return
+    }
+    catch {
+      Start-Sleep -Milliseconds 500
+    }
+  } while ((Get-Date) -lt $deadline)
+  throw "Timed out waiting for $Url"
+}
+
 try {
   if (-not $UseRealVllm) {
     $mockProcess = Start-Process -FilePath "python" `
       -ArgumentList "-m","uvicorn","experiments.mock_vllm_server:app","--host","127.0.0.1","--port","8000" `
       -WorkingDirectory $repo -PassThru -WindowStyle Hidden
-    Start-Sleep -Seconds 2
+    Wait-HttpReady -Url "http://127.0.0.1:8000/healthz" -TimeoutSec 60
   }
 
   $gateProcess = Start-Process -FilePath "python" `
     -ArgumentList "-m","uvicorn","infergate.app:app","--host","127.0.0.1","--port","8080" `
     -WorkingDirectory $repo -PassThru -WindowStyle Hidden
-  Start-Sleep -Seconds 2
+  Wait-HttpReady -Url "http://127.0.0.1:8080/healthz" -TimeoutSec 120
 
   $experimentArgs = @(
     "-m", "experiments.run_experiment",

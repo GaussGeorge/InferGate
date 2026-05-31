@@ -61,19 +61,21 @@ def prompt_prefix_hash(prompt_text: str, prefix_chars: int = 4096) -> str:
 
 
 class TokenEstimator:
-    def __init__(self, model_id: str | None = None, prefer_hf: bool = False) -> None:
-        self.model_id = model_id or os.getenv("MODEL_ID")
+    def __init__(self, tokenizer_id: str | None = None, prefer_hf: bool = False) -> None:
+        self.tokenizer_id = tokenizer_id or os.getenv("INFERGATE_TOKENIZER_ID")
         self.tokenizer = None
         self.fallback = True
-        if prefer_hf and self.model_id:
+        self.load_error: str | None = None
+        if prefer_hf and self.tokenizer_id:
             try:
                 from transformers import AutoTokenizer  # type: ignore
 
-                self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+                self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id)
                 self.fallback = False
-            except Exception:
+            except Exception as exc:
                 self.tokenizer = None
                 self.fallback = True
+                self.load_error = str(exc)
 
     def count(self, text: str) -> int:
         if not text:
@@ -162,4 +164,3 @@ def build_request_context(
         prompt_text=prompt_text,
         tokenizer_fallback=estimator.fallback,
     )
-

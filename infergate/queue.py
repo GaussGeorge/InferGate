@@ -60,6 +60,14 @@ class AdmissionQueue:
                 tenant_token_debt=dict(tenant_token_debt or {}),
             )
 
+    def snapshot_nowait(self, tenant_token_debt: dict[str, int] | None = None) -> QueueState:
+        return QueueState(
+            waiting_requests=len(self._pending),
+            active_requests=self._active_requests,
+            max_active_requests=self.max_active_requests,
+            tenant_token_debt=dict(tenant_token_debt or {}),
+        )
+
     def _grant_ready_locked(self) -> None:
         self._pending.sort(key=lambda item: (-item.priority, item.created_at))
         while self._active_requests < self.max_active_requests and self._pending:
@@ -67,4 +75,3 @@ class AdmissionQueue:
             ticket.granted = True
             self._active_requests += 1
             ticket.event.set()
-

@@ -18,6 +18,12 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
+For real vLLM runs that need HuggingFace token accounting, install the tokenizer extra:
+
+```powershell
+python -m pip install -e ".[dev,tokenizer]"
+```
+
 `stream=true` is intentionally unsupported in this experiment build. InferGate returns HTTP 400 for streaming requests so traces keep complete TTFT/E2E/token accounting.
 
 ## Run Path 1: Mock Smoke
@@ -82,12 +88,16 @@ Windows-side environment for that run:
 ```powershell
 $env:MODEL_ID="qwen"
 $env:INFERGATE_MODEL_PATH="/mnt/d/model_path/qwen3.5-4b"
+$env:INFERGATE_TOKENIZER_ID="D:\model_path\qwen3.5-4b"
+$env:INFERGATE_USE_HF_TOKENIZER="1"
 $env:VLLM_BASE_URL="http://127.0.0.1:9999"
 $env:VLLM_METRICS_URL="http://127.0.0.1:9999/metrics"
 $env:CACHE_BACKEND="vllm_apc"
 $env:INFERGATE_GPU="RTX A4000 16GB"
 $env:VLLM_LAUNCH_ARGS="python -m vllm.entrypoints.openai.api_server --model /mnt/d/model_path/qwen3.5-4b --served-model-name qwen --trust-remote-code --host 127.0.0.1 --port 9999 --max-model-len 4096 --gpu-memory-utilization 0.8 --enforce-eager --max-num-seqs 8 --enable-auto-tool-choice --tool-call-parser hermes"
 ```
+
+`MODEL_ID=qwen` is only the vLLM served model name sent in OpenAI requests. `INFERGATE_TOKENIZER_ID=D:\model_path\qwen3.5-4b` is the Windows path used only for `AutoTokenizer.from_pretrained(...)`. The matching WSL model path is `/mnt/d/model_path/qwen3.5-4b`.
 
 Run real-service smoke levels:
 
@@ -98,6 +108,30 @@ Run real-service smoke levels:
 ```
 
 The 10-request run should be 100% successful. For 100/1000-request runs, inspect `results/smoke/infergate_trace.jsonl` for `vllm_unreachable`, `queue_timeout`, timeout, or OOM symptoms.
+
+## Run Path 2b: Policy Calibration
+
+Milestone 3 calibration uses real vLLM and A4000-tuned thresholds. It starts InferGate per run and writes calibration artifacts:
+
+```powershell
+$env:MODEL_ID="qwen"
+$env:INFERGATE_TOKENIZER_ID="D:\model_path\qwen3.5-4b"
+$env:INFERGATE_USE_HF_TOKENIZER="1"
+$env:VLLM_BASE_URL="http://127.0.0.1:9999"
+$env:VLLM_METRICS_URL="http://127.0.0.1:9999/metrics"
+python -m experiments.calibrate_policy --output-dir results/calibration
+```
+
+Outputs:
+
+```text
+results/calibration/client_*.jsonl
+results/calibration/trace_*.jsonl
+results/calibration/summary.csv
+results/calibration/decision_breakdown.csv
+```
+
+The calibrated A4000 settings are kept in `configs/policies.yaml` as `infergate_admission_a4000_calibrated`; the original default policy remains unchanged.
 
 ## Policies
 
@@ -171,7 +205,10 @@ Trace records include:
 request_id, session_id, policy, decision, estimated_cost,
 utility, session_step, queue_wait_ms, ttft_ms, e2e_ms,
 prompt_tokens, completion_tokens, accepted, rejected, degraded,
-score, reason, gateway_ms, cache_backend, tokenizer_fallback
+score, reason, gateway_ms, cache_backend, tokenizer_fallback,
+load_running, load_waiting, load_kv_cache_usage,
+load_prefix_cache_hit_rate, queue_active, queue_waiting,
+queue_saturation, max_tokens_original, max_tokens_sent
 ```
 
 ## Artifact Reproduction

@@ -116,6 +116,15 @@ class TraceRecord(BaseModel):
     ttft_ms: float | None = None
     e2e_ms: float | None = None
     gateway_ms: float | None = None
+    load_running: int | None = None
+    load_waiting: int | None = None
+    load_kv_cache_usage: float | None = None
+    load_prefix_cache_hit_rate: float | None = None
+    queue_active: int | None = None
+    queue_waiting: int | None = None
+    queue_saturation: float | None = None
+    max_tokens_original: int | None = None
+    max_tokens_sent: int | None = None
     prompt_tokens: int
     completion_tokens: int = 0
     accepted: bool = False

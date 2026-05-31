@@ -1,3 +1,5 @@
+import types
+
 from infergate.tokenizer import TokenEstimator, build_request_context, extract_prompt_text, prompt_prefix_hash
 
 
@@ -45,3 +47,36 @@ def test_metadata_and_headers_override_defaults() -> None:
     assert ctx.deadline_ms == 5000
     assert ctx.cache_key == "header-key"
 
+
+def test_tokenizer_id_does_not_default_to_model_id(monkeypatch) -> None:
+    monkeypatch.setenv("MODEL_ID", "qwen")
+    monkeypatch.delenv("INFERGATE_TOKENIZER_ID", raising=False)
+    estimator = TokenEstimator(prefer_hf=True)
+    assert estimator.tokenizer_id is None
+    assert estimator.fallback is True
+
+
+def test_tokenizer_id_uses_dedicated_env(monkeypatch) -> None:
+    loaded: dict[str, str] = {}
+
+    class FakeTokenizer:
+        def encode(self, text: str) -> list[int]:
+            return [1, 2, 3]
+
+    class FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(tokenizer_id: str) -> FakeTokenizer:
+            loaded["tokenizer_id"] = tokenizer_id
+            return FakeTokenizer()
+
+    monkeypatch.setenv("MODEL_ID", "qwen")
+    monkeypatch.setenv("INFERGATE_TOKENIZER_ID", r"D:\model_path\qwen3.5-4b")
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "transformers",
+        types.SimpleNamespace(AutoTokenizer=FakeAutoTokenizer),
+    )
+    estimator = TokenEstimator(prefer_hf=True)
+    assert loaded["tokenizer_id"] == r"D:\model_path\qwen3.5-4b"
+    assert estimator.fallback is False
+    assert estimator.count("hello") == 3

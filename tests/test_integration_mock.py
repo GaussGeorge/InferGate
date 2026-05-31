@@ -4,8 +4,8 @@ import httpx
 import pytest
 
 from experiments.mock_vllm_server import app as mock_app
-from infergate.proxy import ProxyConfig, create_app
-from infergate.schemas import LoadSnapshot, PolicySettings
+from infergate.proxy import ProxyConfig, _apply_degrade, create_app
+from infergate.schemas import Action, Decision, LoadSnapshot, PolicySettings
 
 
 @pytest.mark.asyncio
@@ -99,3 +99,27 @@ async def test_trace_has_top_level_score_and_reason(tmp_path) -> None:
     assert "reason" in record
     assert "gateway_ms" in record
     assert "cache_backend" in record
+    for field in [
+        "load_running",
+        "load_waiting",
+        "load_kv_cache_usage",
+        "load_prefix_cache_hit_rate",
+        "queue_active",
+        "queue_waiting",
+        "queue_saturation",
+        "max_tokens_original",
+        "max_tokens_sent",
+    ]:
+        assert field in record
+    assert record["max_tokens_original"] == 8
+    assert record["max_tokens_sent"] == 8
+
+
+def test_degrade_reduces_max_tokens_even_below_threshold() -> None:
+    payload = {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 32}
+    degraded = _apply_degrade(
+        payload,
+        Decision(action=Action.DEGRADE, reason="test_degrade", degrade_max_tokens=64),
+    )
+    assert degraded["max_tokens"] == 16
+    assert degraded["max_tokens"] < payload["max_tokens"]

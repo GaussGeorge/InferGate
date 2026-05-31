@@ -14,8 +14,16 @@ policies:
   infergate_admission:
     reject_score: 0.0010
     degrade_score: 0.0020
+  infergate_admission_a4000_calibrated:
+    max_active_requests: 4
+    max_queue_size: 32
+    queue_timeout_ms: 120000
+    kv_reject_threshold: 0.80
+    waiting_reject_threshold: 8
+    reject_score: 0.0030
+    degrade_score: 0.0060
+    degraded_max_tokens: 64
   infergate_cache:
     reject_score: 0.0010
     degrade_score: 0.0020
     warmup_budget_fraction: 0.10
-

@@ -77,3 +77,22 @@ def test_infergate_cache_boosts_reuse_priority() -> None:
     assert hot.score > cold.score
     assert hot.warmup_candidate is True
 
+
+def test_infergate_admission_changes_decision_under_high_load() -> None:
+    policy = make_policy(
+        "infergate_admission",
+        PolicySettings(admission_reject_score=0.003, admission_degrade_score=0.006),
+    )
+    request = make_request(utility=1.0, estimated_cost=1000)
+    cache = CacheState(cache_key="k")
+    low = policy.decide(request, LoadSnapshot(num_requests_waiting=0, kv_cache_usage_perc=0.1), QueueState(), cache)
+    high = policy.decide(
+        request,
+        LoadSnapshot(num_requests_waiting=4, kv_cache_usage_perc=0.9),
+        QueueState(active_requests=4, max_active_requests=4),
+        cache,
+    )
+    assert low.action == Action.ACCEPT
+    assert high.action in {Action.DEFER, Action.DEGRADE, Action.REJECT}
+    assert high.action != low.action
+    assert high.reason

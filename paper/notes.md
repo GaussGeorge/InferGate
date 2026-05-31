@@ -43,6 +43,45 @@ Real metrics sample is saved under `results/real_vllm/metrics_sample.txt` and mi
 
 Tokenizer fallback rate was 100% during this smoke, so Milestone 3 should either install/use a HuggingFace tokenizer for `qwen` or explicitly keep the character-length estimator as an experimental approximation.
 
+## Milestone 3 Real Metrics and Policy Calibration
+
+Milestone 3 split the vLLM served model name from the tokenizer path:
+
+```text
+MODEL_ID=qwen
+INFERGATE_TOKENIZER_ID=D:\model_path\qwen3.5-4b
+INFERGATE_USE_HF_TOKENIZER=1
+```
+
+With `python -m pip install -e ".[dev,tokenizer]"`, the real 10-request smoke reached 10/10 accepted and tokenizer fallback rate 0%. The matching model paths are `/mnt/d/model_path/qwen3.5-4b` inside WSL and `D:\model_path\qwen3.5-4b` on Windows.
+
+The frozen A4000 calibration settings for the next stage are:
+
+```text
+max_active_requests=4
+max_queue_size=32
+queue_timeout_ms=120000
+kv_reject_threshold=0.80
+waiting_reject_threshold=8
+admission_reject_score=0.0030
+admission_degrade_score=0.0060
+degraded_max_tokens=64
+```
+
+Calibration ran `long_context`, `mixed_short_long`, and `agent_session` with concurrency 8/12/16 and 60 requests per run. All real calibration traces are under `results/calibration/`.
+
+Observed overload boundary:
+
+```text
+long_context: accept + defer + degrade + reject at concurrency 8/12/16
+mixed_short_long: accept + defer + degrade at concurrency 8/12/16
+agent_session: accept + defer + degrade at concurrency 8/12/16
+```
+
+The strongest overload signal is `long_context`, where low-score high-cost requests are rejected with `low_score_overload`, mid-score requests are degraded with `degrade_low_score_overload`, and high-score requests are deferred with `high_score_queue`. Queue saturation, rather than vLLM waiting depth alone, is the first reliable pressure signal for this single-A4000 setup.
+
+Gateway P95 across the calibration summary is below 5 ms after moving queue-state reads to a non-blocking snapshot. Degrade records satisfy `max_tokens_sent < max_tokens_original`.
+
 ## Negative Result Policy
 
 If InferGate does not improve utility-weighted goodput or session completion by at least 10% in an overloaded region, report the boundary condition explicitly and shift the narrative toward characterization and constrained-serving design tradeoffs.
