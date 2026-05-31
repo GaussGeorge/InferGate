@@ -103,6 +103,8 @@ class TraceRecord(BaseModel):
     session_id: str
     policy: str
     decision: str
+    score: float | None = None
+    reason: str | None = None
     estimated_cost: int
     utility: float
     session_step: int
@@ -121,4 +123,3 @@ class TraceRecord(BaseModel):
     tokenizer_fallback: bool = False
     error: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
-

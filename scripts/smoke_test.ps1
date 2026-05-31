@@ -22,6 +22,26 @@ $env:CACHE_BACKEND = if ($env:CACHE_BACKEND) { $env:CACHE_BACKEND } else { "vllm
 $mockProcess = $null
 $gateProcess = $null
 
+function Stop-StartedProcess {
+  param(
+    [System.Diagnostics.Process]$Process,
+    [string]$Name
+  )
+  if ($null -eq $Process) {
+    return
+  }
+  try {
+    $Process.Refresh()
+    if (-not $Process.HasExited) {
+      Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+      $Process.WaitForExit(5000) | Out-Null
+    }
+  }
+  catch {
+    Write-Warning "Failed to stop $Name process $($Process.Id): $($_.Exception.Message)"
+  }
+}
+
 try {
   if (-not $UseRealVllm) {
     $mockProcess = Start-Process -FilePath "python" `
@@ -48,14 +68,13 @@ try {
     $experimentArgs += @("--model", $env:MODEL_ID)
   }
   python @experimentArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "experiments.run_experiment failed with exit code $LASTEXITCODE"
+  }
 
   Write-Host "Smoke results written to $results"
 }
 finally {
-  if ($gateProcess -and -not $gateProcess.HasExited) {
-    Stop-Process -Id $gateProcess.Id -Force
-  }
-  if ($mockProcess -and -not $mockProcess.HasExited) {
-    Stop-Process -Id $mockProcess.Id -Force
-  }
+  Stop-StartedProcess -Process $gateProcess -Name "InferGate"
+  Stop-StartedProcess -Process $mockProcess -Name "mock vLLM"
 }

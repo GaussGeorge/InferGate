@@ -209,6 +209,40 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         payload = await request.json()
         headers = _filtered_headers(request)
         ctx = build_request_context(payload, request.headers, app.state.token_estimator)
+        if payload.get("stream") is True:
+            gateway_ms = (time.perf_counter() - request_started) * 1000
+            record = TraceRecord(
+                request_id=ctx.request_id,
+                session_id=ctx.session_id,
+                policy=request.headers.get("x-infergate-policy", app.state.config.policy_name),
+                decision=Action.REJECT.value,
+                score=0.0,
+                reason="streaming_not_supported",
+                estimated_cost=ctx.estimated_cost,
+                utility=ctx.utility,
+                session_step=ctx.session_step,
+                queue_wait_ms=0.0,
+                gateway_ms=gateway_ms,
+                prompt_tokens=ctx.prompt_tokens,
+                accepted=False,
+                rejected=True,
+                degraded=False,
+                step0_rejection=False,
+                cache_key=ctx.cache_key,
+                cache_backend=app.state.cache_registry.cache_backend,
+                tokenizer_fallback=ctx.tokenizer_fallback,
+                error="stream=true is not supported by InferGate experiments",
+            )
+            app.state.trace_writer.write(record.model_dump())
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": "InferGate does not support stream=true in this experiment build",
+                        "type": "unsupported_streaming",
+                    }
+                },
+                status_code=400,
+            )
         policy_name = request.headers.get("x-infergate-policy", app.state.config.policy_name)
         try:
             policy = make_policy(policy_name, app.state.config.settings)
@@ -229,6 +263,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 session_id=ctx.session_id,
                 policy=policy_name,
                 decision=decision.action.value,
+                score=decision.score,
+                reason=decision.reason,
                 estimated_cost=ctx.estimated_cost,
                 utility=ctx.utility,
                 session_step=ctx.session_step,
@@ -300,6 +336,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 session_id=ctx.session_id,
                 policy=policy_name,
                 decision=decision.action.value,
+                score=decision.score,
+                reason=decision.reason,
                 estimated_cost=ctx.estimated_cost,
                 utility=ctx.utility,
                 session_step=ctx.session_step,
@@ -344,6 +382,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                     session_id=ctx.session_id,
                     policy=policy_name,
                     decision=decision.action.value,
+                    score=decision.score,
+                    reason=decision.reason,
                     estimated_cost=ctx.estimated_cost,
                     utility=ctx.utility,
                     session_step=ctx.session_step,
