@@ -82,6 +82,41 @@ The strongest overload signal is `long_context`, where low-score high-cost reque
 
 Gateway P95 across the calibration summary is below 5 ms after moving queue-state reads to a non-blocking snapshot. Degrade records satisfy `max_tokens_sent < max_tokens_original`.
 
+## Milestone 4 Admission-Only Pilot
+
+Pilot matrix completed on real A4000/vLLM/Qwen3.5-4B with:
+
+```text
+policies=fcfs,sjf,edf,static_threshold,vtc_inspired,infergate_admission
+workloads=long_context,mixed_short_long,agent_session
+concurrency=8,12,16
+requests_per_run=20
+repeats=1
+```
+
+The pilot produced 54 client traces, 54 InferGate traces, `results/main_pilot/summary.csv`, `results/main_pilot/decision_breakdown.csv`, and six figures under `paper/figures/main_pilot/`. Tokenizer fallback stayed at 0%, global gateway P95 stayed below 5 ms, and all degraded requests satisfied `max_tokens_sent < max_tokens_original`.
+
+Pilot overload behavior:
+
+```text
+long_context: infergate_admission produces accept + defer + degrade + reject
+mixed_short_long: infergate_admission produces accept + defer + degrade
+agent_session: infergate_admission produces accept + defer + degrade
+```
+
+Intended claims for the main-matrix figures:
+
+```text
+utility_goodput_per_second.png: In high-contention long-context workloads, InferGate trades some rejection/degradation for higher utility-weighted completion rate per second.
+slo_satisfaction_rate.png: Admission decisions expose the SLO boundary where FCFS-like policies keep accepting work that cannot complete within deadlines.
+session_completion_rate.png: Session progress weighting protects multi-step agent sessions from mid-session loss under overload.
+ttft_p95.png: Defer/degrade decisions reduce tail latency pressure for accepted work, especially on long-context and mixed workloads.
+decision_breakdown.png: The calibrated policy produces explainable action diversity rather than accepting all requests.
+degraded_and_rejected_rate.png: InferGate's cost is visible as controlled degradation and entry rejection, which must be compared against utility and session completion gains.
+```
+
+The 60-request, 3-repeat main matrix should reuse the frozen Milestone 3 thresholds without further tuning. `short_qa` remains a low-load boundary workload and can be omitted from the first required main pass if the three overload workloads already consume the available A4000 run window.
+
 ## Negative Result Policy
 
 If InferGate does not improve utility-weighted goodput or session completion by at least 10% in an overloaded region, report the boundary condition explicitly and shift the narrative toward characterization and constrained-serving design tradeoffs.

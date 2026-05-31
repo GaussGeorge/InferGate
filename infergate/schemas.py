@@ -112,6 +112,8 @@ class TraceRecord(BaseModel):
     estimated_cost: int
     utility: float
     session_step: int
+    deadline_ms: int | None = None
+    session_total_steps: int = 1
     queue_wait_ms: float
     ttft_ms: float | None = None
     e2e_ms: float | None = None

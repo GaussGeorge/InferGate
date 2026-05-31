@@ -225,9 +225,9 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
-        request_started = time.perf_counter()
         queue_wait_ms = 0.0
         payload = await request.json()
+        request_started = time.perf_counter()
         headers = _filtered_headers(request)
         ctx = build_request_context(payload, request.headers, app.state.token_estimator)
         policy_name = request.headers.get("x-infergate-policy", app.state.config.policy_name)
@@ -247,6 +247,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 estimated_cost=ctx.estimated_cost,
                 utility=ctx.utility,
                 session_step=ctx.session_step,
+                deadline_ms=ctx.deadline_ms,
+                session_total_steps=ctx.session_total_steps,
                 queue_wait_ms=0.0,
                 gateway_ms=gateway_ms,
                 **trace_context(load_snapshot, queue_state, ctx.max_tokens, None),
@@ -290,6 +292,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 estimated_cost=ctx.estimated_cost,
                 utility=ctx.utility,
                 session_step=ctx.session_step,
+                deadline_ms=ctx.deadline_ms,
+                session_total_steps=ctx.session_total_steps,
                 queue_wait_ms=0.0,
                 gateway_ms=gateway_ms,
                 **trace_context(load_snapshot, queue_state, ctx.max_tokens, None),
@@ -365,6 +369,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 estimated_cost=ctx.estimated_cost,
                 utility=ctx.utility,
                 session_step=ctx.session_step,
+                deadline_ms=ctx.deadline_ms,
+                session_total_steps=ctx.session_total_steps,
                 queue_wait_ms=queue_wait_ms,
                 ttft_ms=ttft_ms,
                 e2e_ms=e2e_ms,
@@ -412,6 +418,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                     estimated_cost=ctx.estimated_cost,
                     utility=ctx.utility,
                     session_step=ctx.session_step,
+                    deadline_ms=ctx.deadline_ms,
+                    session_total_steps=ctx.session_total_steps,
                     queue_wait_ms=queue_wait_ms,
                     e2e_ms=(time.perf_counter() - e2e_started) * 1000,
                     gateway_ms=gateway_ms,

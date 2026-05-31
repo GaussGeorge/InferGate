@@ -103,6 +103,9 @@ async def _send_one(
                 "prompt_tokens": int((usage or {}).get("prompt_tokens") or 0),
                 "completion_tokens": int((usage or {}).get("completion_tokens") or 0),
                 "session_id": metadata.get("x-session-id", "default"),
+                "session_step": int(metadata.get("x-session-step", 0) or 0),
+                "session_total_steps": int(metadata.get("x-session-total-steps", 1) or 1),
+                "deadline_ms": metadata.get("x-request-deadline-ms"),
                 "utility": float(metadata.get("x-request-utility", 1.0)),
                 "policy": policy,
             }
