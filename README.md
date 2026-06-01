@@ -83,6 +83,24 @@ python -m vllm.entrypoints.openai.api_server \
   --tool-call-parser hermes
 ```
 
+For Milestone 5 cache experiments, restart vLLM with prefix caching enabled. The validation script checks `vllm:cache_config_info` and will mark the run invalid if `enable_prefix_caching="False"`:
+
+```bash
+python -m vllm.entrypoints.openai.api_server \
+  --model /mnt/d/model_path/qwen3.5-4b \
+  --served-model-name qwen \
+  --trust-remote-code \
+  --host 127.0.0.1 \
+  --port 9999 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.8 \
+  --enforce-eager \
+  --max-num-seqs 8 \
+  --enable-prefix-caching \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes
+```
+
 Windows-side environment for that run:
 
 ```powershell

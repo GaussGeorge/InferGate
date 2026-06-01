@@ -31,6 +31,7 @@ class ProxyConfig(BaseModel):
     tokenizer_id: str | None = None
     policy_name: str = "infergate_admission"
     cache_backend: str = "vllm_apc"
+    cache_mode: str = "no_cache_control"
     results_dir: str = "results/smoke"
     trace_filename: str = "infergate_trace.jsonl"
     prefer_hf_tokenizer: bool = False
@@ -59,6 +60,7 @@ class ProxyConfig(BaseModel):
             tokenizer_id=os.getenv("INFERGATE_TOKENIZER_ID"),
             policy_name=os.getenv("INFERGATE_POLICY", "infergate_admission"),
             cache_backend=os.getenv("CACHE_BACKEND", "vllm_apc"),
+            cache_mode=os.getenv("INFERGATE_CACHE_MODE", "no_cache_control"),
             results_dir=os.getenv("INFERGATE_RESULTS_DIR", "results/smoke"),
             prefer_hf_tokenizer=os.getenv("INFERGATE_USE_HF_TOKENIZER", "0") == "1",
             request_timeout_s=float(os.getenv("INFERGATE_REQUEST_TIMEOUT_S", "300")),
@@ -135,7 +137,11 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     app.state.config = cfg
     app.state.token_estimator = TokenEstimator(cfg.tokenizer_id, prefer_hf=cfg.prefer_hf_tokenizer)
     app.state.cache_registry = CacheRegistry(cache_backend=cfg.cache_backend)
-    app.state.warmup_manager = WarmupManager(cfg.model_id, cfg.settings.warmup_budget_fraction)
+    app.state.warmup_manager = WarmupManager(
+        cfg.model_id,
+        cfg.settings.warmup_budget_fraction,
+        cooldown_s=float(os.getenv("INFERGATE_WARMUP_COOLDOWN_S", "60")),
+    )
     app.state.queue = AdmissionQueue(max_active_requests=cfg.settings.max_active_requests)
     app.state.trace_writer = JsonlWriter(Path(cfg.results_dir) / cfg.trace_filename)
     app.state.tenant_token_debt = {}
@@ -152,6 +158,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             "policy": app.state.config.policy_name,
             "vllm_url": app.state.forward_url,
             "cache_backend": app.state.cache_registry.cache_backend,
+            "cache_mode": app.state.config.cache_mode,
             "model_id": app.state.config.model_id,
             "tokenizer_id": app.state.config.tokenizer_id,
             "tokenizer_fallback": app.state.token_estimator.fallback,
@@ -164,6 +171,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         return {
             "queue": queue_state.model_dump(),
             "cache_backend": app.state.cache_registry.cache_backend,
+            "cache_mode": app.state.config.cache_mode,
             "total_prompt_tokens": app.state.cache_registry.total_prompt_tokens,
             "warmup_token_budget_used": app.state.cache_registry.warmup_token_budget_used,
             "warmup_requests": warmup.warmup_requests,
@@ -204,14 +212,27 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             "queue_saturation": queue_state.saturation,
             "max_tokens_original": max_tokens_original,
             "max_tokens_sent": max_tokens_sent,
+            "prefix_cache_hit_rate_before": load_snapshot.prefix_cache_hit_rate,
+            "prefix_cache_hit_rate_after": app.state.load_snapshot.prefix_cache_hit_rate,
         }
 
-    async def maybe_schedule_warmup(load_snapshot: LoadSnapshot) -> None:
+    async def maybe_schedule_warmup(load_snapshot: LoadSnapshot) -> tuple[bool, bool]:
+        cache_mode = app.state.config.cache_mode
+        if cache_mode == "no_cache_control":
+            return False, False
         if app.state.cache_registry.cache_backend not in {"vllm_apc", "lmcache"}:
-            return
+            return False, False
         if not load_snapshot.metrics_available:
-            return
-        for entry in app.state.cache_registry.candidates(min_reuse_count=2)[:1]:
+            return False, False
+        candidates = app.state.cache_registry.candidates(min_reuse_count=2)
+        if cache_mode == "lru_warm":
+            candidates = sorted(candidates, key=lambda item: item.last_seen_ts or 0.0, reverse=True)
+        elif cache_mode == "always_warm":
+            candidates = sorted(candidates, key=lambda item: item.last_warmup_ts or 0.0)
+        elif cache_mode != "infergate_cache":
+            return False, False
+        saw_candidate = bool(candidates)
+        for entry in candidates[:1]:
             if not app.state.warmup_manager.should_warmup(
                 entry,
                 load_snapshot,
@@ -221,7 +242,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 continue
             app.state.cache_registry.mark_warmup(entry.cache_key, warmup_tokens=1)
             asyncio.create_task(app.state.warmup_manager.run_warmup(entry, forward_to_vllm))
-            break
+            return True, True
+        return saw_candidate, False
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
@@ -259,6 +281,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 step0_rejection=False,
                 cache_key=ctx.cache_key,
                 cache_backend=app.state.cache_registry.cache_backend,
+                cache_mode=app.state.config.cache_mode,
                 tokenizer_fallback=ctx.tokenizer_fallback,
                 error="stream=true is not supported by InferGate experiments",
             )
@@ -304,6 +327,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 step0_rejection=ctx.session_step == 0,
                 cache_key=ctx.cache_key,
                 cache_backend=app.state.cache_registry.cache_backend,
+                cache_mode=app.state.config.cache_mode,
                 tokenizer_fallback=ctx.tokenizer_fallback,
                 extra={"reason": decision.reason, "score": decision.score},
             )
@@ -359,6 +383,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             app.state.tenant_token_debt[ctx.tenant_id] = (
                 app.state.tenant_token_debt.get(ctx.tenant_id, 0) + prompt_tokens + completion_tokens
             )
+            warmup_candidate, warmup_sent = await maybe_schedule_warmup(load_snapshot)
             record = TraceRecord(
                 request_id=ctx.request_id,
                 session_id=ctx.session_id,
@@ -383,12 +408,15 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 degraded=decision.action == Action.DEGRADE,
                 cache_key=ctx.cache_key,
                 cache_backend=app.state.cache_registry.cache_backend,
+                cache_mode=app.state.config.cache_mode,
+                warmup_candidate=decision.warmup_candidate or warmup_candidate,
+                warmup_sent=warmup_sent,
+                warmup_tokens_used=app.state.cache_registry.warmup_token_budget_used,
                 tokenizer_fallback=ctx.tokenizer_fallback,
                 error=None if 200 <= status_code < 500 else upstream_response.text[:500],
                 extra={"reason": decision.reason, "score": decision.score},
             )
             app.state.trace_writer.write(record.model_dump())
-            await maybe_schedule_warmup(load_snapshot)
             if response_json is not None and "application/json" in content_type:
                 return JSONResponse(response_json, status_code=status_code)
             return Response(
@@ -431,6 +459,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                     step0_rejection=status_code == 429 and ctx.session_step == 0,
                     cache_key=ctx.cache_key,
                     cache_backend=app.state.cache_registry.cache_backend,
+                    cache_mode=app.state.config.cache_mode,
                     tokenizer_fallback=ctx.tokenizer_fallback,
                     error=error,
                     extra={"reason": decision.reason, "score": decision.score},

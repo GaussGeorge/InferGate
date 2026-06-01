@@ -27,3 +27,14 @@ def test_warmup_budget_conditions() -> None:
     assert manager.should_warmup(entry, high_load, 0, registry.total_prompt_tokens) is False
     assert manager.should_warmup(entry, low_load, 31, registry.total_prompt_tokens) is False
 
+
+def test_warmup_cooldown_prevents_duplicate_key_warmup() -> None:
+    registry = CacheRegistry()
+    for _ in range(3):
+        registry.observe("shared", prompt_tokens=100, utility=1.0, prompt_text="shared prefix")
+    entry = registry.get_entry("shared")
+    manager = WarmupManager(model_id="mock", budget_fraction=0.10, cooldown_s=60)
+    low_load = LoadSnapshot(num_requests_waiting=0, kv_cache_usage_perc=0.5, metrics_available=True)
+    assert manager.should_warmup(entry, low_load, 0, registry.total_prompt_tokens) is True
+    registry.mark_warmup("shared", warmup_tokens=1)
+    assert manager.should_warmup(entry, low_load, 1, registry.total_prompt_tokens) is False

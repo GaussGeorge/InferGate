@@ -18,9 +18,15 @@ class WarmupStats:
 
 
 class WarmupManager:
-    def __init__(self, model_id: str | None = None, budget_fraction: float = 0.10) -> None:
+    def __init__(
+        self,
+        model_id: str | None = None,
+        budget_fraction: float = 0.10,
+        cooldown_s: float = 60.0,
+    ) -> None:
         self.model_id = model_id
         self.budget_fraction = budget_fraction
+        self.cooldown_s = cooldown_s
         self.stats = WarmupStats()
 
     def budget_available(self, warmup_token_budget_used: int, total_prompt_tokens: int) -> bool:
@@ -42,6 +48,10 @@ class WarmupManager:
             and self.budget_available(warmup_token_budget_used, total_prompt_tokens)
             and entry.predicted_reuse_count >= 2
             and bool(entry.prompt_text)
+            and (
+                entry.last_warmup_ts is None
+                or time.time() - entry.last_warmup_ts >= self.cooldown_s
+            )
         )
 
     def build_warmup_request(self, entry: PrefixEntry) -> dict[str, Any]:
@@ -69,4 +79,3 @@ class WarmupManager:
             return True
         except Exception:
             return False
-

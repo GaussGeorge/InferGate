@@ -177,6 +177,31 @@ Interpretation: the admission-only result should be framed as a utility-goodput 
 
 Next step for Milestone 5: keep these admission thresholds frozen and test whether cache-aware warmup can reduce TTFT P95 or improve prefix-hit behavior without increasing warmup overhead above the 10% prompt-token budget.
 
+## Milestone 5 Cache Validation Status
+
+The cache experiment harness is implemented for vLLM APC first, with LMCache kept as a later smoke path. Current scripts:
+
+```text
+experiments/validate_prefix_cache.py
+experiments/run_cache_matrix.py
+experiments/summarize_cache_matrix.py
+```
+
+The first APC validation against `http://127.0.0.1:9999` did not produce prefix-cache query or hit deltas:
+
+```text
+workload=repeated_rag_context
+requests=4
+prefix_cache_queries_delta=0
+prefix_cache_hits_delta=0
+prefix_cache_enabled=False
+reason=vllm_prefix_caching_disabled_restart_with_enable_prefix_caching
+```
+
+The raw metrics include `vllm:prefix_cache_queries_total` and `vllm:prefix_cache_hits_total`, but `vllm:cache_config_info` reports `enable_prefix_caching="False"`. Therefore, the full cache matrix should not be interpreted until vLLM is restarted with `--enable-prefix-caching`. This is an environment validation blocker, not a cache-policy result.
+
+Milestone 5 claim guardrail: cache-aware warmup can only be claimed when prefixes are reused and prefix caching is active; non-reuse workloads must remain within the 10% warmup-token overhead budget and should not lose more than 5% utility goodput.
+
 ## Negative Result Policy
 
 If InferGate does not improve utility-weighted goodput or session completion by at least 10% in an overloaded region, report the boundary condition explicitly and shift the narrative toward characterization and constrained-serving design tradeoffs.

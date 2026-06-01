@@ -16,6 +16,7 @@ class PrefixEntry:
     total_prompt_tokens: int = 0
     last_seen_ts: float | None = None
     last_hit_ts: float | None = None
+    last_warmup_ts: float | None = None
     warmed_count: int = 0
 
     @property
@@ -59,6 +60,7 @@ class CacheRegistry:
     def mark_warmup(self, cache_key: str, warmup_tokens: int = 1) -> None:
         entry = self.get_entry(cache_key)
         entry.warmed_count += 1
+        entry.last_warmup_ts = time.time()
         self.warmup_token_budget_used += max(0, warmup_tokens)
 
     def state(self, cache_key: str) -> CacheState:
@@ -73,6 +75,8 @@ class CacheRegistry:
             total_prompt_tokens=entry.total_prompt_tokens,
             last_seen_ts=entry.last_seen_ts,
             last_hit_ts=entry.last_hit_ts,
+            last_warmup_ts=entry.last_warmup_ts,
+            warmed_count=entry.warmed_count,
         )
 
     def candidates(self, min_reuse_count: int = 2) -> list[PrefixEntry]:
@@ -80,4 +84,3 @@ class CacheRegistry:
             entry for entry in self._entries.values() if entry.predicted_reuse_count >= min_reuse_count
         ]
         return sorted(entries, key=lambda item: (item.utility_sum, item.predicted_reuse_count), reverse=True)
-

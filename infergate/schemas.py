@@ -87,6 +87,8 @@ class CacheState(BaseModel):
     total_prompt_tokens: int = 0
     last_seen_ts: float | None = None
     last_hit_ts: float | None = None
+    last_warmup_ts: float | None = None
+    warmed_count: int = 0
 
 
 class PolicySettings(BaseModel):
@@ -135,6 +137,12 @@ class TraceRecord(BaseModel):
     step0_rejection: bool = False
     cache_key: str | None = None
     cache_backend: str = "vllm_apc"
+    cache_mode: str | None = None
+    warmup_candidate: bool = False
+    warmup_sent: bool = False
+    warmup_tokens_used: int = 0
+    prefix_cache_hit_rate_before: float | None = None
+    prefix_cache_hit_rate_after: float | None = None
     tokenizer_fallback: bool = False
     error: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)

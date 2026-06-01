@@ -23,6 +23,19 @@ def _barplot(df: pd.DataFrame, y: str, output: Path, title: str, hue: str | None
     plt.close()
 
 
+def _cache_barplot(df: pd.DataFrame, y: str, output: Path, title: str, workloads: list[str] | None = None) -> None:
+    data = df.copy()
+    if workloads is not None and "workload" in data.columns:
+        data = data[data["workload"].isin(workloads)]
+    plt.figure(figsize=(12, 5.4))
+    sns.barplot(data=data, x="cache_mode", y=y, hue="workload")
+    plt.xticks(rotation=25, ha="right")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output, dpi=180)
+    plt.close()
+
+
 def _lineplot(df: pd.DataFrame, y: str, output: Path, title: str) -> None:
     plt.figure(figsize=(11, 5.2))
     sns.lineplot(data=df, x="concurrency", y=y, hue="policy", style="workload", markers=True)
@@ -64,6 +77,23 @@ def _degraded_rejected(df: pd.DataFrame, output: Path) -> None:
     plt.close()
 
 
+def _cache_decision_breakdown(df: pd.DataFrame, output: Path) -> None:
+    decision_cols = ["decision_accept", "decision_defer", "decision_degrade", "decision_reject"]
+    available = [col for col in decision_cols if col in df.columns]
+    if not available:
+        return
+    grouped = df.groupby(["cache_mode"], as_index=False)[available].sum()
+    melted = grouped.melt(id_vars=["cache_mode"], value_vars=available, var_name="decision", value_name="count")
+    melted["decision"] = melted["decision"].str.replace("decision_", "", regex=False)
+    plt.figure(figsize=(11, 5.2))
+    sns.barplot(data=melted, x="cache_mode", y="count", hue="decision")
+    plt.xticks(rotation=25, ha="right")
+    plt.title("Cache decision breakdown")
+    plt.tight_layout()
+    plt.savefig(output, dpi=180)
+    plt.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", default="results/summary.csv")
@@ -74,7 +104,20 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     if df.empty:
         raise SystemExit("summary is empty")
-    if "utility_goodput_per_second" in df.columns:
+    if "prefix_cache_queries_delta" in df.columns and "cache_mode" in df.columns:
+        _cache_barplot(df, "prefix_cache_hit_rate_delta", output_dir / "prefix_hit_rate_delta.png", "Prefix hit-rate delta")
+        _cache_barplot(df, "TTFT_P95", output_dir / "ttft_p95_cache_modes.png", "TTFT P95 by cache mode")
+        _cache_barplot(df, "warmup_token_overhead_ratio", output_dir / "warmup_overhead.png", "Warmup token overhead")
+        _cache_barplot(df, "utility_goodput_per_second", output_dir / "utility_goodput_cache_modes.png", "Utility goodput by cache mode")
+        _cache_barplot(
+            df,
+            "warmup_token_overhead_ratio",
+            output_dir / "non_reuse_overhead.png",
+            "Non-reuse warmup overhead",
+            workloads=["non_reuse_control"],
+        )
+        _cache_decision_breakdown(df, output_dir / "cache_decision_breakdown.png")
+    elif "utility_goodput_per_second" in df.columns:
         _barplot(df, "utility_goodput_per_second", output_dir / "utility_goodput_per_second.png", "Utility goodput per second")
         _barplot(df, "SLO_satisfaction_rate", output_dir / "slo_satisfaction_rate.png", "SLO satisfaction rate")
         _barplot(df, "session_completion_rate", output_dir / "session_completion_rate.png", "Session completion rate")
