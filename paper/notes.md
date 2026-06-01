@@ -117,6 +117,66 @@ degraded_and_rejected_rate.png: InferGate's cost is visible as controlled degrad
 
 The 60-request, 3-repeat main matrix should reuse the frozen Milestone 3 thresholds without further tuning. `short_qa` remains a low-load boundary workload and can be omitted from the first required main pass if the three overload workloads already consume the available A4000 run window.
 
+## Milestone 4 Admission-Only Main Matrix
+
+Main matrix completed on real A4000/vLLM/Qwen3.5-4B using commit `c0c4e5a` and the frozen Milestone 3 calibrated thresholds. The first main pass intentionally focused on the three overload workloads and omitted `short_qa` as a low-load boundary workload:
+
+```text
+policies=fcfs,sjf,edf,static_threshold,vtc_inspired,infergate_admission
+workloads=long_context,mixed_short_long,agent_session
+concurrency=8,12,16
+requests_per_run=60
+repeats=3
+total_runs=162
+```
+
+Artifacts:
+
+```text
+results/main_matrix/summary.csv
+results/main_matrix/decision_breakdown.csv
+results/main_matrix/matrix_manifest.jsonl
+paper/figures/main_matrix/utility_goodput_per_second.png
+paper/figures/main_matrix/slo_satisfaction_rate.png
+paper/figures/main_matrix/session_completion_rate.png
+paper/figures/main_matrix/ttft_p95.png
+paper/figures/main_matrix/decision_breakdown.png
+paper/figures/main_matrix/degraded_and_rejected_rate.png
+```
+
+Engineering validity checks:
+
+```text
+completed_runs=162/162
+max_gateway_P95=3.04 ms
+tokenizer_fallback_rate=0%
+degrade_correct_rate=100%
+infergate_decisions=accept 108, defer 1075, degrade 318, reject 119
+```
+
+Primary result:
+
+```text
+agent_session utility_goodput_per_second: +22.5% to +23.0% over the strongest baseline at concurrency 8/12, +5.0% at concurrency 16
+long_context utility_goodput_per_second: +109% to +120% over the strongest baseline across concurrency 8/12/16
+mixed_short_long utility_goodput_per_second: +19.5% to +19.9% over the strongest baseline across concurrency 8/12/16
+```
+
+Main claim for the paper: under resource-constrained A4000 serving, utility-aware admission improves utility goodput per second in overload workloads by rejecting or degrading low-score work and deferring high-score work, instead of preserving FIFO-style full acceptance.
+
+Boundary and negative result:
+
+```text
+session_completion_rate does not improve over the best baseline in this matrix.
+agent_session: InferGate is 1.0 at concurrency 8 and about 0.986 at concurrency 12/16, while several baselines remain at 1.0.
+long_context: InferGate is about 0.78-0.79 because it rejects low-score entry requests; EDF-style baselines preserve 1.0 session completion by accepting everything, but with much lower utility goodput per second.
+mixed_short_long: InferGate is about 0.994, slightly below the 1.0 best baseline.
+```
+
+Interpretation: the admission-only result should be framed as a utility-goodput improvement with an explicit completion-rate tradeoff, not as a universal session-completion win. The strongest claim region is `long_context` and `mixed_short_long`; `agent_session` is a weaker positive result for utility goodput and a boundary case for session completion.
+
+Next step for Milestone 5: keep these admission thresholds frozen and test whether cache-aware warmup can reduce TTFT P95 or improve prefix-hit behavior without increasing warmup overhead above the 10% prompt-token budget.
+
 ## Negative Result Policy
 
 If InferGate does not improve utility-weighted goodput or session completion by at least 10% in an overloaded region, report the boundary condition explicitly and shift the narrative toward characterization and constrained-serving design tradeoffs.
